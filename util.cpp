@@ -113,18 +113,31 @@ std::vector<std::string> get_files_from_dir(const std::string& dir) {
 
     // Find the first file in the directory
     hFind = FindFirstFile(directoryPath, &findFileData);
-
+    bool isAbsolutePath = false;
     // Check if the directory was found
     if (hFind == INVALID_HANDLE_VALUE) {
-        printf("Unable to find directory.\n");
-        return files;
+        printf("Unable to find directory. Try with original path \n");
+
+        char directoryPathAbsolute[MAX_PATH];
+        sprintf(directoryPathAbsolute, "%s*", dir.c_str());
+
+        hFind = FindFirstFile(directoryPathAbsolute, &findFileData);
+        isAbsolutePath = true;
+        if (hFind == INVALID_HANDLE_VALUE) {
+            printf("Absolute path was also wrong.\n");
+            return files;
+        }
     }
 
     // Loop through all files in the directory
     do {
         // Check if the found file is a regular file (not a directory)
         if (!(findFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
-            files.push_back(std::string(currentDirectory) + "\\" + dir + "\\" + std::string(findFileData.cFileName));
+            if (isAbsolutePath) {
+                files.push_back(dir + "\\" + std::string(findFileData.cFileName));
+            } else {
+                files.push_back(std::string(currentDirectory) + "\\" + dir + "\\" + std::string(findFileData.cFileName));
+            }
         }
     } while (FindNextFile(hFind, &findFileData) != 0);
 
@@ -200,18 +213,17 @@ int32_t get_num_physical_cores() {
 #ifdef __linux__
     // enumerate the set of thread siblings, num entries is num cores
     std::unordered_set<std::string> siblings;
-    for (uint32_t cpu=0; cpu < UINT32_MAX; ++cpu) {
-        std::ifstream thread_siblings("/sys/devices/system/cpu/cpu"
-            + std::to_string(cpu) + "/topology/thread_siblings");
+    for (uint32_t cpu = 0; cpu < UINT32_MAX; ++cpu) {
+        std::ifstream thread_siblings("/sys/devices/system/cpu" + std::to_string(cpu) + "/topology/thread_siblings");
         if (!thread_siblings.is_open()) {
-            break; // no more cpus
+            break;  // no more cpus
         }
         std::string line;
         if (std::getline(thread_siblings, line)) {
             siblings.insert(line);
         }
     }
-    if (!siblings.empty()) {
+    if (siblings.size() > 0) {
         return static_cast<int32_t>(siblings.size());
     }
 #elif defined(__APPLE__) && defined(__MACH__)
@@ -225,34 +237,8 @@ int32_t get_num_physical_cores() {
     if (result == 0) {
         return num_physical_cores;
     }
-#elif defined(_WIN32) && !defined(__MINGW64__)
-    // TODO: windows + arm64 + mingw64
-    unsigned int n_threads_win = std::thread::hardware_concurrency();
-    unsigned int default_threads = n_threads_win > 0 ? (n_threads_win <= 4 ? n_threads_win : n_threads_win / 2) : 4;
-
-    DWORD buffer_size = 0;
-    if (!GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &buffer_size)) {
-        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
-            return default_threads;
-        }
-    }
-
-    std::vector<char> buffer(buffer_size);
-    if (!GetLogicalProcessorInformationEx(RelationProcessorCore, reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buffer.data()), &buffer_size)) {
-        return default_threads;
-    }
-
-    int32_t num_physical_cores = 0;
-    PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX info = reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(buffer.data());
-    while (buffer_size > 0) {
-        if (info->Relationship == RelationProcessorCore) {
-            num_physical_cores += info->Processor.GroupCount;
-        }
-        buffer_size -= info->Size;
-        info = reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(reinterpret_cast<char*>(info) + info->Size);
-    }
-
-    return num_physical_cores > 0 ? num_physical_cores : default_threads;
+#elif defined(_WIN32)
+    // TODO: Implement
 #endif
     unsigned int n_threads = std::thread::hardware_concurrency();
     return n_threads > 0 ? (n_threads <= 4 ? n_threads : n_threads / 2) : 4;
@@ -375,7 +361,7 @@ void pretty_progress(int step, int steps, float time) {
         }
     }
     progress += "|";
-    printf(time > 1.0f ? "\r%s %i/%i - %.2fs/it" : "\r%s %i/%i - %.2fit/s",
+    printf(time > 1.0f ? "\r%s %i/%i - %.2fs/it" : "\r%s %i/%i - %.2fit/s\033[K",
            progress.c_str(), step, steps,
            time > 1.0f || time == 0 ? time : (1.0f / time));
     fflush(stdout);  // for linux

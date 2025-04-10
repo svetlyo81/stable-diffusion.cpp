@@ -47,6 +47,8 @@ const char* sampling_methods_str[] = {
     "iPNDM",
     "iPNDM_v",
     "LCM",
+    "DDIM \"trailing\"",
+    "TCD"
 };
 
 /*================================================== Helper Functions ================================================*/
@@ -170,9 +172,7 @@ public:
 #endif
 #ifdef SD_USE_VULKAN
         LOG_DEBUG("Using Vulkan backend");
-        for (int device = 0; device < ggml_backend_vk_get_device_count(); ++device) {
-            backend = ggml_backend_vk_init(device);
-        }
+        backend = ggml_backend_vk_init(0);
         if (!backend) {
             LOG_WARN("Failed to initialize Vulkan backend");
         }
@@ -673,19 +673,20 @@ public:
         for (auto& kv : lora_state) {
             const std::string& lora_name = kv.first;
             float multiplier             = kv.second;
-
-            if (curr_lora_state.find(lora_name) != curr_lora_state.end()) {
-                float curr_multiplier = curr_lora_state[lora_name];
-                float multiplier_diff = multiplier - curr_multiplier;
-                if (multiplier_diff != 0.f) {
-                    lora_state_diff[lora_name] = multiplier_diff;
-                }
-            } else {
-                lora_state_diff[lora_name] = multiplier;
-            }
+            lora_state_diff[lora_name] += multiplier;
         }
-
-        LOG_INFO("Attempting to apply %lu LoRAs", lora_state.size());
+        for (auto& kv : curr_lora_state) {
+            const std::string& lora_name = kv.first;
+            float curr_multiplier        = kv.second;
+            lora_state_diff[lora_name] -= curr_multiplier;
+        }
+        
+        size_t rm = lora_state_diff.size() - lora_state.size();
+        if (rm != 0) {
+            LOG_INFO("Attempting to apply %lu LoRAs (removing %lu applied LoRAs)", lora_state.size(), rm);
+        } else {
+            LOG_INFO("Attempting to apply %lu LoRAs", lora_state.size());
+        }
 
         for (auto& kv : lora_state_diff) {
             apply_lora(kv.first, kv.second);
@@ -792,6 +793,7 @@ public:
                         float min_cfg,
                         float cfg_scale,
                         float guidance,
+                        float eta,
                         sample_method_t method,
                         const std::vector<float>& sigmas,
                         int start_merge_step,
@@ -987,7 +989,7 @@ public:
             return denoised;
         };
 
-        sample_k_diffusion(method, denoise, work_ctx, x, sigmas, rng);
+        sample_k_diffusion(method, denoise, work_ctx, x, sigmas, rng, eta);
 
         x = denoiser->inverse_noise_scaling(sigmas[sigmas.size() - 1], x);
 
@@ -1193,6 +1195,7 @@ sd_image_t* generate_image(sd_ctx_t* sd_ctx,
                            int clip_skip,
                            float cfg_scale,
                            float guidance,
+                           float eta,
                            int width,
                            int height,
                            enum sample_method_t sample_method,
@@ -1456,6 +1459,7 @@ sd_image_t* generate_image(sd_ctx_t* sd_ctx,
                                                      cfg_scale,
                                                      cfg_scale,
                                                      guidance,
+                                                     eta,
                                                      sample_method,
                                                      sigmas,
                                                      start_merge_step,
@@ -1521,6 +1525,7 @@ sd_image_t* txt2img(sd_ctx_t* sd_ctx,
                     int clip_skip,
                     float cfg_scale,
                     float guidance,
+                    float eta,
                     int width,
                     int height,
                     enum sample_method_t sample_method,
@@ -1599,6 +1604,7 @@ sd_image_t* txt2img(sd_ctx_t* sd_ctx,
                                                clip_skip,
                                                cfg_scale,
                                                guidance,
+                                               eta,
                                                width,
                                                height,
                                                sample_method,
@@ -1630,6 +1636,7 @@ sd_image_t* img2img(sd_ctx_t* sd_ctx,
                     int clip_skip,
                     float cfg_scale,
                     float guidance,
+                    float eta,
                     int width,
                     int height,
                     sample_method_t sample_method,
@@ -1777,6 +1784,7 @@ sd_image_t* img2img(sd_ctx_t* sd_ctx,
                                                clip_skip,
                                                cfg_scale,
                                                guidance,
+                                               eta,
                                                width,
                                                height,
                                                sample_method,
@@ -1796,7 +1804,7 @@ sd_image_t* img2img(sd_ctx_t* sd_ctx,
 
     size_t t2 = ggml_time_ms();
 
-    LOG_INFO("img2img completed in %.2fs", (t1 - t0) * 1.0f / 1000);
+    LOG_INFO("img2img completed in %.2fs", (t2 - t0) * 1.0f / 1000);
 
     return result_images;
 }
@@ -1889,6 +1897,7 @@ SD_API sd_image_t* img2vid(sd_ctx_t* sd_ctx,
                                                  0.f,
                                                  min_cfg,
                                                  cfg_scale,
+                                                 0.f,
                                                  0.f,
                                                  sample_method,
                                                  sigmas,
