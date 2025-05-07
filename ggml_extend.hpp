@@ -1232,7 +1232,13 @@ public:
                  bool free_compute_buffer_immediately = true,
                  struct ggml_tensor** output          = NULL,
                  struct ggml_context* output_ctx      = NULL) {
-        alloc_compute_buffer(get_graph);
+        if(!alloc_compute_buffer(get_graph)) {
+            free_params_buffer();
+            free_compute_buffer();
+            free_params_ctx();
+            free_compute_ctx();
+            return;
+        }
         reset_compute_ctx();
         struct ggml_cgraph* gf = get_graph();
         GGML_ASSERT(ggml_gallocr_alloc_graph(compute_allocr, gf));
