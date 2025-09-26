@@ -10761,15 +10761,43 @@ static ggml_guid_t ggml_backend_vk_guid() {
 }
 
 ggml_backend_t ggml_backend_vk_init(size_t dev_num) {
-    VK_LOG_DEBUG("ggml_backend_vk_init(" << dev_num << ")");
+    //VK_LOG_DEBUG("ggml_backend_vk_init(" << dev_num << ")");
+
+    ggml_vk_instance_init();
+
+    std::vector<vk::PhysicalDevice> physical_devices = vk_instance.instance.enumeratePhysicalDevices();
+    size_t currentDeviceIndex = 0;
+    size_t totalMost = 0;
+
+    for (size_t i = 0; i < vk_instance.device_indices.size(); i++) {
+        vk::PhysicalDevice vkdev = physical_devices[vk_instance.device_indices[i]];
+
+        vk::PhysicalDeviceProperties2 new_props;
+        vkdev.getProperties2(&new_props);
+        if(new_props.properties.deviceType == vk::PhysicalDeviceType::eDiscreteGpu) {
+            vk::PhysicalDeviceMemoryProperties memprops = vkdev.getMemoryProperties();
+            size_t total = 0;
+            for (const vk::MemoryHeap& heap : memprops.memoryHeaps) {
+                if (heap.flags & vk::MemoryHeapFlagBits::eDeviceLocal) {
+                    total = heap.size;
+                    break;
+                }
+            }
+
+            if(total > totalMost) {
+                totalMost = total;
+                currentDeviceIndex = i;
+            }
+        }
+    }
 
     ggml_backend_vk_context * ctx = new ggml_backend_vk_context;
-    ggml_vk_init(ctx, dev_num);
+    ggml_vk_init(ctx, vk_instance.device_indices[currentDeviceIndex]);
 
     ggml_backend_t vk_backend = new ggml_backend {
         /* .guid    = */ ggml_backend_vk_guid(),
         /* .iface   = */ ggml_backend_vk_interface,
-        /* .device  = */ ggml_backend_reg_dev_get(ggml_backend_vk_reg(), dev_num),
+        /* .device  = */ ggml_backend_reg_dev_get(ggml_backend_vk_reg(), vk_instance.device_indices[currentDeviceIndex]),
         /* .context = */ ctx,
     };
 

@@ -104,7 +104,7 @@ const char* unused_tensors[] = {
 };
 
 bool is_unused_tensor(std::string name) {
-    for (int i = 0; i < sizeof(unused_tensors) / sizeof(const char*); i++) {
+    for (size_t i = 0; i < sizeof(unused_tensors) / sizeof(const char*); i++) {
         if (starts_with(name, unused_tensors[i])) {
             return true;
         }
@@ -2046,11 +2046,11 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb, ggml_backend
                     ggml_backend_tensor_set(dst_tensor, convert_buffer.data(), 0, ggml_nbytes(dst_tensor));
                 }
             }
-            size_t tensor_max = processed_tensor_storages.size();
+            /*size_t tensor_max = processed_tensor_storages.size();
             int64_t t2        = ggml_time_ms();
             pretty_progress(++tensor_count, tensor_max, (t2 - t1) / 1000.0f);
             t1      = t2;
-            partial = tensor_count != tensor_max;
+            partial = tensor_count != tensor_max;*/
         }
 
         if (zip != NULL) {

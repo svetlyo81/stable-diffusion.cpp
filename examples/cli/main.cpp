@@ -91,7 +91,6 @@ struct SDParams {
     rng_type_t rng_type           = CUDA_RNG;
     int64_t seed                  = 42;
     bool verbose                  = false;
-    bool vae_tiling               = false;
     bool control_net_cpu          = false;
     bool normalize_input          = false;
     bool clip_on_cpu              = false;
@@ -111,6 +110,7 @@ struct SDParams {
     bool chroma_use_dit_mask = true;
     bool chroma_use_t5_mask  = false;
     int chroma_t5_mask_pad   = 1;
+    sd_tiling_params_t vae_tiling_params = {false, 0, 0, 0.5f, 0.0f, 0.0f};
 };
 
 void print_params(SDParams params) {
@@ -165,7 +165,7 @@ void print_params(SDParams params) {
     printf("    rng:               %s\n", sd_rng_type_name(params.rng_type));
     printf("    seed:              %ld\n", params.seed);
     printf("    batch_count:       %d\n", params.batch_count);
-    printf("    vae_tiling:        %s\n", params.vae_tiling ? "true" : "false");
+    printf("    vae_tiling:        %s\n", params.vae_tiling_params.enabled ? "true" : "false");
     printf("    upscale_repeats:   %d\n", params.upscale_repeats);
     printf("    chroma_use_dit_mask:   %s\n", params.chroma_use_dit_mask ? "true" : "false");
     printf("    chroma_use_t5_mask:    %s\n", params.chroma_use_t5_mask ? "true" : "false");
@@ -231,6 +231,9 @@ void print_usage(int argc, const char* argv[]) {
     printf("  --clip-skip N                      ignore last layers of CLIP network; 1 ignores none, 2 ignores one layer (default: -1)\n");
     printf("                                     <= 0 represents unspecified, will be 1 for SD1.x, 2 for SD2.x\n");
     printf("  --vae-tiling                       process vae in tiles to reduce memory usage\n");
+    printf("  --vae-tile-size [X]x[Y]            tile size for vae tiling (default: 32x32)\n");
+    printf("  --vae-relative-tile-size [X]x[Y]   relative tile size for vae tiling, in fraction of image size if < 1, in number of tiles per dim if >=1 (overrides --vae-tile-size)\n");
+    printf("  --vae-tile-overlap OVERLAP         tile overlap for vae tiling, in fraction of tile size (default: 0.5)\n");
     printf("  --vae-on-cpu                       keep vae in cpu (for low vram)\n");
     printf("  --clip-on-cpu                      keep clip in cpu (for low vram)\n");
     printf("  --diffusion-fa                     use flash attention in the diffusion model (for low vram)\n");
@@ -394,7 +397,6 @@ void parse_args(int argc, const char** argv, SDParams& params) {
         {"-o", "--output", "", &params.output_path},
         {"-p", "--prompt", "", &params.prompt},
         {"-n", "--negative-prompt", "", &params.negative_prompt},
-
         {"", "--upscale-model", "", &params.esrgan_path},
     };
 
@@ -417,6 +419,7 @@ void parse_args(int argc, const char** argv, SDParams& params) {
         {"", "--strength", "", &params.strength},
         {"", "--style-ratio", "", &params.style_ratio},
         {"", "--control-strength", "", &params.control_strength},
+        {"", "--vae-tile-overlap", "", &params.vae_tiling_params.target_overlap},
         {"", "--slg-scale", "", &params.slg_scale},
         {"", "--skip-layer-start", "", &params.skip_layer_start},
         {"", "--skip-layer-end", "", &params.skip_layer_end},
@@ -424,7 +427,6 @@ void parse_args(int argc, const char** argv, SDParams& params) {
     };
 
     options.bool_options = {
-        {"", "--vae-tiling", "", true, &params.vae_tiling},
         {"", "--control-net-cpu", "", true, &params.control_net_cpu},
         {"", "--normalize-input", "", true, &params.normalize_input},
         {"", "--clip-on-cpu", "", true, &params.clip_on_cpu},
@@ -567,6 +569,52 @@ void parse_args(int argc, const char** argv, SDParams& params) {
         return 1;
     };
 
+    auto on_tile_size_arg = [&](int argc, const char** argv, int index) {
+        if (++index >= argc) {
+            return -1;
+        }
+        std::string tile_size_str = argv[index];
+        size_t x_pos              = tile_size_str.find('x');
+        try {
+            if (x_pos != std::string::npos) {
+                std::string tile_x_str               = tile_size_str.substr(0, x_pos);
+                std::string tile_y_str               = tile_size_str.substr(x_pos + 1);
+                params.vae_tiling_params.tile_size_x = std::stoi(tile_x_str);
+                params.vae_tiling_params.tile_size_y = std::stoi(tile_y_str);
+            } else {
+                params.vae_tiling_params.tile_size_x = params.vae_tiling_params.tile_size_y = std::stoi(tile_size_str);
+            }
+        } catch (const std::invalid_argument& e) {
+            return -1;
+        } catch (const std::out_of_range& e) {
+            return -1;
+        }
+        return 1;
+    };
+
+    auto on_relative_tile_size_arg = [&](int argc, const char** argv, int index) {
+        if (++index >= argc) {
+            return -1;
+        }
+        std::string rel_size_str = argv[index];
+        size_t x_pos             = rel_size_str.find('x');
+        try {
+            if (x_pos != std::string::npos) {
+                std::string rel_x_str               = rel_size_str.substr(0, x_pos);
+                std::string rel_y_str               = rel_size_str.substr(x_pos + 1);
+                params.vae_tiling_params.rel_size_x = std::stof(rel_x_str);
+                params.vae_tiling_params.rel_size_y = std::stof(rel_y_str);
+            } else {
+                params.vae_tiling_params.rel_size_x = params.vae_tiling_params.rel_size_y = std::stof(rel_size_str);
+            }
+        } catch (const std::invalid_argument& e) {
+            return -1;
+        } catch (const std::out_of_range& e) {
+            return -1;
+        }
+        return 1;
+    };
+
     options.manual_options = {
         {"-M", "--mode", "", on_mode_arg},
         {"", "--type", "", on_type_arg},
@@ -577,6 +625,8 @@ void parse_args(int argc, const char** argv, SDParams& params) {
         {"", "--skip-layers", "", on_skip_layers_arg},
         {"-r", "--ref-image", "", on_ref_image_arg},
         {"-h", "--help", "", on_help_arg},
+        {"", "--vae-tile-size", "", on_tile_size_arg},
+        {"", "--vae-relative-tile-size", "", on_relative_tile_size_arg},
     };
 
     if (!parse_options(argc, argv, options)) {
@@ -901,7 +951,6 @@ int main(int argc, const char* argv[]) {
         params.embedding_dir.c_str(),
         params.stacked_id_embed_dir.c_str(),
         vae_decode_only,
-        params.vae_tiling,
         true,
         params.n_threads,
         params.wtype,
@@ -991,6 +1040,7 @@ int main(int argc, const char* argv[]) {
             params.style_ratio,
             params.normalize_input,
             params.input_id_images_path.c_str(),
+            params.vae_tiling_params,
         };
 
         results              = generate_image(sd_ctx, &img_gen_params);

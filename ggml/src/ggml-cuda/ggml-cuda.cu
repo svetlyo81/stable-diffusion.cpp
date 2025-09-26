@@ -3786,13 +3786,20 @@ ggml_backend_reg_t ggml_backend_cuda_reg() {
     return &reg;
 }
 
-ggml_backend_t ggml_backend_cuda_init(int device) {
-    if (device < 0 || device >= ggml_backend_cuda_get_device_count()) {
+ggml_backend_t ggml_backend_cuda_init(int device_) {
+    /*if (device < 0 || device >= ggml_backend_cuda_get_device_count()) {
         GGML_LOG_ERROR("%s: invalid device %d\n", __func__, device);
         return nullptr;
+    }*/
+
+    int currentDeviceIndex = 0;
+
+    for (int device = 0; device < ggml_backend_cuda_get_device_count(); ++device) {
+        if (ggml_cuda_info().devices[device].total_vram > ggml_cuda_info().devices[currentDeviceIndex].total_vram)
+            currentDeviceIndex = device;
     }
 
-    ggml_backend_cuda_context * ctx = new ggml_backend_cuda_context(device);
+    ggml_backend_cuda_context * ctx = new ggml_backend_cuda_context(currentDeviceIndex);
     if (ctx == nullptr) {
         GGML_LOG_ERROR("%s: failed to allocate context\n", __func__);
         return nullptr;
@@ -3801,7 +3808,7 @@ ggml_backend_t ggml_backend_cuda_init(int device) {
     ggml_backend_t cuda_backend = new ggml_backend {
         /* .guid    = */ ggml_backend_cuda_guid(),
         /* .iface   = */ ggml_backend_cuda_interface,
-        /* .device  = */ ggml_backend_reg_dev_get(ggml_backend_cuda_reg(), device),
+        /* .device  = */ ggml_backend_reg_dev_get(ggml_backend_cuda_reg(), currentDeviceIndex),
         /* .context = */ ctx,
     };
 

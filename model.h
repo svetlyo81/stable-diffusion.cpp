@@ -154,10 +154,10 @@ struct TensorStorage {
 
     std::vector<TensorStorage> chunk(size_t n) {
         std::vector<TensorStorage> chunks;
-        size_t chunk_size = nbytes_to_read() / n;
+        uint64_t chunk_size = nbytes_to_read() / n;
         // printf("%d/%d\n", chunk_size, nbytes_to_read());
         reverse_ne();
-        for (int i = 0; i < n; i++) {
+        for (size_t i = 0; i < n; i++) {
             TensorStorage chunk_i = *this;
             chunk_i.ne[0]         = ne[0] / n;
             chunk_i.offset        = offset + i * chunk_size;
