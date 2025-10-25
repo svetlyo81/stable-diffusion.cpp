@@ -827,7 +827,7 @@ int main(int argc, const char* argv[]) {
     }
 
     if (params.mode == CONVERT) {
-        bool success = convert(params.model_path.c_str(), params.vae_path.c_str(), params.output_path.c_str(), params.wtype, params.tensor_type_rules.c_str());
+        bool success = convert(params.model_path.c_str(), params.vae_path.c_str(), params.output_path.c_str(), params.wtype, params.tensor_type_rules.c_str(), params.prompt.c_str(), params.lora_model_dir.c_str());
         if (!success) {
             fprintf(stderr,
                     "convert '%s'/'%s' to '%s' failed\n",
