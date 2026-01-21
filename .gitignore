@@ -1,9 +1,10 @@
 build*/
+cmake-build-*/
 test/
 .vscode/
+.idea/
 .cache/
 *.swp
-.vscode/
 *.bat
 *.bin
 *.exe
@@ -11,3 +12,5 @@ test/
 output*.png
 models*
 *.log
+preview.png
+*.zip
